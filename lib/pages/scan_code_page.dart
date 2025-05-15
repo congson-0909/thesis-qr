@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
-import 'result.dart';
+// import 'result.dart';
 
 class ScanCodePage extends StatefulWidget {
   const ScanCodePage({super.key});
@@ -10,31 +10,45 @@ class ScanCodePage extends StatefulWidget {
 }
 
 class _ScanCodePageState extends State<ScanCodePage> {
-  final MobileScannerController cameraController = MobileScannerController();
-  double zoomLevel = 1.0;
+  final MobileScannerController cameraController = MobileScannerController(
+    facing: CameraFacing.back,
+    detectionSpeed: DetectionSpeed.noDuplicates,
+  );
+
+  // keep the same 1–10 range as before
+  static const double _minZoom = 1.0;
+  static const double _maxZoom = 10.0;
+
+  double zoomLevel = _minZoom;
+  bool isTorchOn = false;
   bool _isProcessing = false;
 
-  void _onDetect(BarcodeCapture capture) async {
+  Future<void> _onDetect(BarcodeCapture capture) async {
     if (_isProcessing) return;
+    final barcodes = capture.barcodes;
+    if (barcodes.isEmpty) return;
 
-    final List<Barcode> barcodes = capture.barcodes;
-    if (barcodes.isNotEmpty) {
-      _isProcessing = true;
-      await cameraController.stop(); // Dừng camera để không quét tiếp
+    setState(() => _isProcessing = true);
+    await cameraController.stop();
 
-      final String scannedData = barcodes.first.rawValue ?? "No data";
+    final data = barcodes.first.rawValue ?? 'No data';
+    if (!mounted) return;
 
-      // Chuyển sang màn hình kết quả
-      await Navigator.pushNamed(
-        context,
-        "/result",
-        arguments: scannedData,
-      );
+    await Navigator.pushNamed(context, '/result', arguments: data);
 
-      // Sau khi quay lại, resume camera
-      _isProcessing = false;
-      await cameraController.start();
-    }
+    setState(() => _isProcessing = false);
+    await cameraController.start();
+  }
+
+  void _toggleTorch() {
+    cameraController.toggleTorch();
+    setState(() => isTorchOn = !isTorchOn);
+  }
+
+  void _switchCamera() {
+    cameraController.switchCamera();
+    // after switching, re‑apply zoom
+    cameraController.setZoomScale(zoomLevel);
   }
 
   @override
@@ -48,14 +62,25 @@ class _ScanCodePageState extends State<ScanCodePage> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Scan QR Code'),
+        centerTitle: true,
+        elevation: 0,
+        flexibleSpace: Container(
+          decoration: const BoxDecoration(
+            gradient: LinearGradient(
+              colors: [Colors.blueAccent, Colors.lightBlue],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ),
+          ),
+        ),
         actions: [
           IconButton(
-            icon: const Icon(Icons.flash_on),
-            onPressed: () => cameraController.toggleTorch(),
+            icon: Icon(isTorchOn ? Icons.flash_on : Icons.flash_off, color: Colors.white),
+            onPressed: _toggleTorch,
           ),
           IconButton(
-            icon: const Icon(Icons.switch_camera),
-            onPressed: () => cameraController.switchCamera(),
+            icon: const Icon(Icons.cameraswitch, color: Colors.white),
+            onPressed: _switchCamera,
           ),
         ],
       ),
@@ -65,25 +90,43 @@ class _ScanCodePageState extends State<ScanCodePage> {
             controller: cameraController,
             onDetect: _onDetect,
           ),
-          CustomPaint(
-            painter: BarcodeOverlayPainter(),
-          ),
-          Positioned(
-            bottom: 20,
-            left: 20,
-            right: 20,
-            child: Slider(
-              value: zoomLevel,
-              min: 1.0,
-              max: 10.0,
-              onChanged: (value) {
-                setState(() {
-                  zoomLevel = value;
-                });
-                cameraController.setZoomScale(value);
-              },
+          Center(
+            child: CustomPaint(
+              size: MediaQuery.of(context).size,
+              painter: BarcodeOverlayPainter(
+                borderColor: Colors.blueAccent.withOpacity(0.6),
+              ),
             ),
           ),
+          Positioned(
+            bottom: 30,
+            left: 24,
+            right: 24,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Slider(
+                  value: zoomLevel.clamp(_minZoom, _maxZoom),
+                  min: _minZoom,
+                  max: _maxZoom,
+                  divisions: (_maxZoom - _minZoom).toInt(),
+                  label: '${zoomLevel.toStringAsFixed(1)}x',
+                  onChanged: (value) {
+                    setState(() => zoomLevel = value);
+                    // guard against out‑of‑range
+                    final z = value.clamp(_minZoom, _maxZoom);
+                    cameraController.setZoomScale(z);
+                  },
+                ),
+                Text(
+                  'Zoom: ${zoomLevel.toStringAsFixed(1)}x',
+                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w500),
+                ),
+              ],
+            ),
+          ),
+          if (_isProcessing)
+            const Center(child: CircularProgressIndicator()),
         ],
       ),
     );
@@ -91,22 +134,25 @@ class _ScanCodePageState extends State<ScanCodePage> {
 }
 
 class BarcodeOverlayPainter extends CustomPainter {
+  final Color borderColor;
+  BarcodeOverlayPainter({this.borderColor = Colors.white});
+
   @override
   void paint(Canvas canvas, Size size) {
     final paint = Paint()
-      ..color = Colors.white.withOpacity(0.5)
+      ..color = borderColor
       ..style = PaintingStyle.stroke
-      ..strokeWidth = 4.0;
+      ..strokeWidth = 4
+      ..strokeCap = StrokeCap.round;
 
     final rect = Rect.fromCenter(
       center: size.center(Offset.zero),
       width: size.width * 0.6,
-      height: size.height * 0.3,
+      height: size.width * 0.6,
     );
-
-    canvas.drawRect(rect, paint);
+    canvas.drawRRect(RRect.fromRectAndRadius(rect, const Radius.circular(16)), paint);
   }
 
   @override
-  bool shouldRepaint(CustomPainter oldDelegate) => false;
+  bool shouldRepaint(covariant CustomPainter old) => false;
 }
